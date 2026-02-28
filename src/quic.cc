@@ -475,8 +475,14 @@ static napi_value QUICContext_ctor(napi_env env, napi_callback_info info) {
   std::call_once(g_ssl_init_once, openssl_init_once);
 
   // Runtime version guard: if DLL mismatch, fail loudly here.
+  //
+  // NOTE:
+  // OpenSSL_version_num() for OpenSSL 3.x follows 0xMNN00PP0L (e.g. 3.5.0 -> 0x30500000).
+  // The previous constant used an extra nybble (0x0305000000) and incorrectly rejected
+  // valid 3.5+ runtimes.
   const uint64_t rnum = (uint64_t)OpenSSL_version_num();
-  if (rnum < 0x0305000000ULL) {
+  constexpr uint64_t kMinQuicOpenSSL = 0x30500000ULL; // OpenSSL 3.5.0+
+  if (rnum < kMinQuicOpenSSL) {
     std::string s = "OpenSSL runtime < 3.5 (DLL mismatch). ";
     s += join_diag();
     throw_err_str(env, s);
