@@ -1,7 +1,23 @@
 "use strict";
 
-const dgram = require("node:dgram");
 const path = require("node:path");
+
+function configureOpenSSLForWindows() {
+  if (process.platform !== "win32") return;
+
+  const root = process.env.OPENSSL_ROOT_DIR || "C:\\vcpkg\\installed\\x64-windows";
+  const binDir = process.env.OPENSSL_BIN || path.join(root, "bin");
+  const modulesDir = process.env.OPENSSL_MODULES || path.join(binDir, "ossl-modules");
+  const conf = process.env.OPENSSL_CONF || path.join(root, "share", "openssl", "openssl.cnf");
+
+  process.env.OPENSSL_MODULES = modulesDir;
+  process.env.OPENSSL_CONF = conf;
+  process.env.PATH = `${binDir};${process.env.PATH || ""}`;
+}
+
+configureOpenSSLForWindows();
+
+const dgram = require("node:dgram");
 const { QUICContext } = require("./build/Release/quic.node");
 
 // ====== CONFIG ======
