@@ -634,30 +634,54 @@ static napi_value QUICContext_createSession(napi_env env, napi_callback_info inf
 
   if (c->is_server) {
     s->listener = SSL_new_listener(c->ctx, 0);
-    if (!s->listener) {
-      std::string errs = openssl_errs_all();
-      std::string msg = "SSL_new_listener failed";
-      if (!errs.empty()) msg += ": " + errs;
-      msg += " | init_diag=" + g_init_diag;
-      msg += " | " + join_diag();
-      delete s;
-      throw_err_str(env, msg);
-      return nullptr;
-    }
 
-    if (!SSL_set_blocking_mode(s->listener, 0)) {
-      std::string errs = openssl_errs_all();
-      std::string msg = "SSL_set_blocking_mode(listener,0) failed";
-      if (!errs.empty()) msg += ": " + errs;
-      msg += " | " + join_diag();
-      delete s;
-      throw_err_str(env, msg);
-      return nullptr;
-    }
+    if (s->listener) {
+      if (!SSL_set_blocking_mode(s->listener, 0)) {
+        std::string errs = openssl_errs_all();
+        std::string msg = "SSL_set_blocking_mode(listener,0) failed";
+        if (!errs.empty()) msg += ": " + errs;
+        msg += " | " + join_diag();
+        delete s;
+        throw_err_str(env, msg);
+        return nullptr;
+      }
 
-    // Attach BIO (ownership of net_ssl transferred)
-    SSL_set_bio(s->listener, s->net_ssl, s->net_ssl);
-    s->listener_ready = false;
+      // Attach BIO (ownership of net_ssl transferred)
+      SSL_set_bio(s->listener, s->net_ssl, s->net_ssl);
+      s->listener_ready = false;
+    } else {
+      // Some OpenSSL 3.5+ Windows builds expose QUIC methods but fail SSL_new_listener().
+      // Fallback to direct server connection mode (single peer) so server.js can proceed.
+      std::string listenerErr = openssl_errs_all();
+      s->conn = SSL_new(c->ctx);
+      if (!s->conn) {
+        std::string errs = openssl_errs_all();
+        std::string msg = "SSL_new_listener failed and SSL_new fallback failed";
+        if (!listenerErr.empty()) msg += ": listener=" + listenerErr;
+        if (!errs.empty()) msg += " | conn=" + errs;
+        msg += " | init_diag=" + g_init_diag;
+        msg += " | " + join_diag();
+        delete s;
+        throw_err_str(env, msg);
+        return nullptr;
+      }
+
+      if (!SSL_set_blocking_mode(s->conn, 0)) {
+        std::string errs = openssl_errs_all();
+        std::string msg = "SSL_new_listener fallback: SSL_set_blocking_mode(conn,0) failed";
+        if (!listenerErr.empty()) msg += ": listener=" + listenerErr;
+        if (!errs.empty()) msg += " | conn=" + errs;
+        msg += " | " + join_diag();
+        delete s;
+        throw_err_str(env, msg);
+        return nullptr;
+      }
+
+      SSL_set_bio(s->conn, s->net_ssl, s->net_ssl); // ownership transfer
+      SSL_set_accept_state(s->conn);
+
+      s->lastError = "SSL_new_listener unavailable; using SSL_new fallback";
+    }
 
     quic_drain_app_out(s);
   } else {
